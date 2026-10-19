@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # wb2api 原生运行（不需要 Docker）
 #
-#   ./setup-native.sh              # 生成配置 → 编译 → 后台启动 → 打印接入信息
+#   ./setup-native.sh              # 有源码则编译；只有预编译二进制则直接用
 #   ./setup-native.sh --no-build   # 跳过编译，直接重启
 #   ./setup-native.sh --regen      # 重新生成 api_key 与面板口令
 #   ./setup-native.sh --stop       # 停止后台进程
 #
-# 依赖：Go 1.22+（macOS 26 上建议 1.25+，见构建后的可执行性检测）、openssl、curl。
-#       前端产物已随仓库提供，无需 Node.js。
+# 依赖：openssl、curl 必有；Go 仅"从源码编译"时需要（GitHub Release 的预编译包不含源码，
+#       也不需要 Go）。前端产物已内嵌在面板二进制里，任何情况下都不需要 Node.js。
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
+HAVE_SRC=0
+[ -d gateway ] && [ -d panel ] && HAVE_SRC=1
 
 DO_STOP=0
 BUILD=1
@@ -56,14 +58,27 @@ if [ "$DO_STOP" = "1" ]; then
 fi
 
 # ── 1. 依赖检查 ────────────────────────────────────────────────────────────
-command -v go >/dev/null 2>&1 || fail "未找到 go。请安装 Go 1.22+：https://go.dev/dl/ （macOS：brew install go）"
 command -v openssl >/dev/null 2>&1 || fail "未找到 openssl（生成随机密钥用）。"
 command -v curl >/dev/null 2>&1 || fail "未找到 curl。"
 
-GO_V=$(go env GOVERSION 2>/dev/null | sed 's/^go//')
-awk -v v="$GO_V" 'BEGIN{split(v,a,"."); exit !(a[1]>1 || (a[1]==1 && a[2]>=22))}' \
-    || fail "Go 版本为 $GO_V，需要 1.22 或更高。"
-say "==> Go $GO_V / $(uname -s) $(uname -m)"
+# 只有「有源码且要编译」时才强制要求 Go。预编译发行包不含 gateway/panel 源码，
+# 落地即可运行——这正是给「只装过 WorkBuddy、没有开发工具链」的用户准备的。
+NEED_BUILD=0
+if [ "$BUILD" = "1" ] && [ "$HAVE_SRC" = "1" ] && command -v go >/dev/null 2>&1; then
+    NEED_BUILD=1
+    GO_V=$(go env GOVERSION 2>/dev/null | sed 's/^go//')
+    awk -v v="$GO_V" 'BEGIN{split(v,a,"."); exit !(a[1]>1 || (a[1]==1 && a[2]>=22))}' \
+        || fail "Go 版本为 $GO_V，需要 1.22 或更高（macOS 26 建议 1.25+）。"
+    say "==> Go $GO_V / $(uname -s) $(uname -m)"
+elif [ -x bin/wb2api ] && [ -x bin/wb2api-panel ]; then
+    say "==> 使用预置二进制（无需 Go）/ $(uname -s) $(uname -m)"
+elif [ "$HAVE_SRC" = "1" ]; then
+    fail "未找到 go，且 bin/ 下没有预编译二进制。
+     安装 Go：https://go.dev/dl/ （macOS：brew install go）
+     或改用预编译发行包：curl -fsSL https://raw.githubusercontent.com/zealxz/wb2api/main/install.sh | bash"
+else
+    fail "当前目录既没有源码，也没有 bin/ 下的预编译二进制。请重新下载发行包。"
+fi
 
 # ── 2. 端口与目录 ──────────────────────────────────────────────────────────
 [ -f .env ] || cp .env.example .env
@@ -120,33 +135,39 @@ sed -i.bak -e "s|\"listen\": \"[0-9:]*\"|\"listen\": \":$PANEL_PORT\"|" \
     config/panel.native.json
 rm -f config/panel.native.json.bak
 
-# ── 4. 编译 ────────────────────────────────────────────────────────────────
-if [ "$BUILD" = "1" ]; then
+# ── 4. 取得可执行文件：源码编译 或 使用预置二进制 ──────────────────────────
+# macOS 26 的 dyld 会拒绝缺少 LC_UUID 的 Mach-O。Go 1.22~1.24 在 darwin 上
+# 不生成该 load command（1.25+ 已修复），表现为「编译成功但一执行就 Abort trap 6」。
+# 预编译包也可能因下载错架构而无法执行。两种形态都实测一次，把问题提前暴露。
+smoke() {
+    local bin="$1" out
+    out=$("$bin" -h 2>&1 || true)
+    if printf '%s' "$out" | grep -q 'missing LC_UUID'; then
+        fail "$(basename "$bin") 无法在本机运行：Mach-O 缺少 LC_UUID。
+     当前 Go ${GO_V:-未知} 在 $(uname -s) 上产出的二进制不被 dyld 接受。
+     处理：升级到 Go 1.25+（实测 1.25.14 / 1.26.9 正常），或改用 Docker 方式（./setup.sh）。"
+    fi
+    if printf '%s' "$out" | grep -qiE 'bad cpu type|exec format error|cannot execute binary'; then
+        fail "$(basename "$bin") 与当前架构（$(uname -m)）不匹配，请下载对应平台的发行包。"
+    fi
+}
+
+if [ "$NEED_BUILD" = "1" ]; then
     mkdir -p bin
     say "==> 编译网关（首次需联网拉取 Go 依赖）"
     ( cd gateway && go build -trimpath -ldflags="-s -w" -o "$ROOT/bin/wb2api" ./cmd/server )
     say "==> 编译面板（前端产物已内嵌，无需 Node.js）"
     ( cd panel && go build -trimpath -ldflags="-s -w" -o "$ROOT/bin/wb2api-panel" ./cmd/server )
-
-    # macOS 26 的 dyld 会拒绝缺少 LC_UUID 的 Mach-O。Go 1.22~1.24 在 darwin 上
-    # 不生成该 load command（1.25+ 已修复），表现为「编译成功但一执行就 Abort trap 6」。
-    # 这里直接实测产物能否启动，把版本问题的报错提前到部署阶段。
-    smoke() {
-        local bin="$1" out
-        out=$("$bin" -h 2>&1 || true)
-        if printf '%s' "$out" | grep -q 'missing LC_UUID'; then
-            fail "$(basename "$bin") 无法在本机运行：Mach-O 缺少 LC_UUID。
-     当前 Go $GO_V 在 $(uname -s) 上产出的二进制不被 dyld 接受。
-     处理：升级到 Go 1.25+（实测 1.25.14 / 1.26.9 正常），或改用 Docker 方式（./setup.sh）。"
-        fi
-    }
-    smoke "$ROOT/bin/wb2api"
-    smoke "$ROOT/bin/wb2api-panel"
-
     say "==> 编译完成：bin/wb2api  bin/wb2api-panel"
+elif [ "$BUILD" = "1" ]; then
+    say "==> 使用预置二进制：bin/wb2api  bin/wb2api-panel"
 else
     [ -x bin/wb2api ] && [ -x bin/wb2api-panel ] || fail "bin/ 下没有可执行文件，请先不带 --no-build 运行一次。"
+    say "==> 跳过编译（--no-build）"
 fi
+
+smoke "$ROOT/bin/wb2api"
+smoke "$ROOT/bin/wb2api-panel"
 
 # ── 5. 重启进程 ────────────────────────────────────────────────────────────
 stop_one panel

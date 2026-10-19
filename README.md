@@ -18,20 +18,22 @@
 - **两种部署形态**：Docker（一条命令起两个容器）或原生二进制（只需 Go，不用 Node）；
   两者共用同一套配置、同一份 `data/`，可随时切换。
 
-## 部署方式：Docker 或原生，二选一
+## 部署方式：三种，按机器条件选
 
-两种方式功能等价，共用同一份 `data/auths/` 与同一份 `.env` 端口配置，可随时切换。
+三种方式功能等价，共用同一份 `data/auths/` 与同一份 `.env` 端口配置，可随时切换。
 
-| | 方式 A：Docker（推荐） | 方式 B：原生运行 |
-|---|---|---|
-| 依赖 | Docker Desktop | **Go 1.22+**（macOS 26 建议 1.25+）、openssl、curl |
-| 命令 | `./setup.sh` | `./setup-native.sh` |
-| 运行形态 | 两个容器 | 两个普通进程 |
-| 面板「一键重启网关」 | 可用 | 不可用（用脚本重载） |
-| 首次耗时 | 1–3 分钟（拉取基础镜像） | 约 10–60 秒（拉取 Go 模块） |
-| 适用场景 | 想省心、日常使用 | 不想装 Docker、资源敏感、部署到服务器 |
+| | 方式 A：Docker | 方式 B：源码编译 | 方式 C：预编译包（最省事） |
+|---|---|---|---|
+| 需要装什么 | Docker Desktop | **Go 1.22+**（macOS 26 建议 1.25+）、openssl、curl | **什么都不用装**（系统自带 curl/tar 即可） |
+| 命令 | `./setup.sh` | `./setup-native.sh` | 一行安装脚本 |
+| 运行形态 | 两个容器 | 两个普通进程 | 两个普通进程 |
+| 面板「一键重启网关」 | 可用 | 不可用 | 不可用 |
+| 首次耗时 | 1–3 分钟（拉基础镜像） | 10–60 秒（拉 Go 模块） | 约 10 秒（下载约 20MB） |
+| 适用 | 想省心、日常使用 | 要改代码、跟进上游 | **机器上只装过 WorkBuddy，没有开发环境** |
 
-### 方式 A：Docker（推荐）
+> **只想用、不想折腾工具链，直接看方式 C。**
+
+### 方式 A：Docker
 
 前置条件：安装并**启动** [Docker Desktop for Mac](https://www.docker.com/products/docker-desktop/)。
 
@@ -56,7 +58,7 @@ cd wb2api
 
 > 端口占用时改 `.env`（`WB2API_PORT` / `WB2API_PANEL_PORT`）后重跑 `./setup.sh --no-build`。
 
-### 方式 B：原生运行（不用 Docker）
+### 方式 B：源码编译（原生运行）
 
 前置条件：**只需要 Go**（`brew install go`，或从 https://go.dev/dl/ 安装）。
 版本要求 1.22+；**macOS 26 上建议 1.25+** —— 更早的 Go 在 darwin 上不生成 `LC_UUID` 这个
@@ -96,6 +98,47 @@ cd panel   && go build -o ../bin/wb2api-panel ./cmd/server && cd ..
 ./bin/wb2api       -config config/gateway.native.json
 ./bin/wb2api-panel -config config/panel.native.json
 ```
+
+### 方式 C：预编译包（零依赖，推荐给普通使用者）
+
+**适用场景**：机器上只装过 WorkBuddy 客户端，没有 Docker、没有 Go、没有 Node。
+系统自带的 `curl` + `tar` 就够。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zealxz/wb2api/main/install.sh | bash
+```
+
+脚本会自动识别 macOS / Linux 与 arm64 / amd64，从 GitHub Releases 拉取对应预编译包，
+解压到 `~/.wb2api`（可用 `WB2API_DIR=/your/path` 改），并清掉 macOS 的 quarantine 属性。
+
+然后启动：
+
+```bash
+cd ~/.wb2api && ./setup-native.sh
+```
+
+预编译包内已含 `bin/wb2api`、`bin/wb2api-panel`（面板前端已内嵌）、配置模板与脚本，
+**不包含源码**，因此运行时完全不需要 Go。之后用法与方式 B 完全一致：
+
+```bash
+./setup-native.sh --stop        # 停止
+./setup-native.sh --no-build    # 改配置后重载
+./setup-native.sh --regen       # 换新密钥
+```
+
+| 平台 | 资产名 |
+|---|---|
+| macOS Apple Silicon | `wb2api-darwin-arm64.tar.gz` |
+| macOS Intel | `wb2api-darwin-amd64.tar.gz` |
+| Linux x86_64 | `wb2api-linux-amd64.tar.gz` |
+| Linux arm64 | `wb2api-linux-arm64.tar.gz` |
+
+也可手动下载：<https://github.com/zealxz/wb2api/releases/latest>
+
+> **macOS 提示**：用 `curl` 安装不会触发 Gatekeeper。若你是**用浏览器下载**的压缩包，
+> 首次执行可能提示「无法验证开发者」，执行一次
+> `xattr -dr com.apple.quarantine ~/.wb2api` 即可。
+
 
 
 ## 添加账号
@@ -152,13 +195,46 @@ print(client.chat.completions.create(
 **跨设备访问**：网关默认监听 `0.0.0.0:7863`，把 `127.0.0.1` 换成宿主机局域网 IP 或 Tailscale IP 即可，
 API Key 不变。**管理面板始终只绑 `127.0.0.1`**，不对外暴露。
 
+## 可用模型：**没有 Claude**
+
+`GET /v1/models` 是按账号实时探测上游目录得到的，不是写死的名单。当前实测（2026-10，国际版试用账号）：
+
+| 家族 | 模型 |
+|---|---|
+| OpenAI | `gpt-5.3-codex` `gpt-5.4` `gpt-5.5` `gpt-5.6-luna` `gpt-5.6-sol` `gpt-5.6-terra` |
+| Google | `gemini-3.5-flash` |
+| GLM | `glm-5.2` `glm-5.3` `glm-5.3-flash` |
+| Kimi | `kimi-k2.6` `kimi-k2.8-preview` `kimi-k3` |
+| 其他 | `deepseek-v4.1-flash` `hy3` `hy4-preview` |
+
+**国际版不含任何 Anthropic 模型（Claude / Opus / Sonnet / Haiku）。**
+
+依据是直连上游两个目录端点取原始响应：
+
+| 端点 | 条目数 | Anthropic 相关 |
+|---|---|---|
+| `/v3/config` | 56 | **0** |
+| `/v2/enterprises/personal/models` | 157 | **0** |
+
+直接调用 `claude-sonnet-4-5`、`claude-opus-4-1` 会返回上游
+`code 11102 model [...] service info not found`——是**模型不存在**，不是额度不足或权限问题。
+
+容易误判的一点：WorkBuddy 的 CLI 工具集（`Task` / `Bash` / `Edit` / `WebFetch`）与
+`system-reminder` 骨架几乎是 Claude Code 的同构复刻，客户端界面里也到处是 "Claude Code" 字样。
+但那是**客户端脚手架**在模仿，背后的推理模型并非 Anthropic 提供。
+因此本网关也无法「反代出 Claude」——上游没有可反代的对象。
+
+> 目录按账号/套餐下发。付费套餐是否开放 Anthropic 无法用现有试用账号验证；
+> 但就当前账号而言，结论是确定的：没有。
+
 ## 目录结构
 
 ```
 .
 ├── docker-compose.yml      # 方式 A：网关 + 面板统一编排
 ├── setup.sh                # 方式 A：Docker 一键部署
-├── setup-native.sh         # 方式 B：原生一键部署（只需 Go）
+├── setup-native.sh         # 方式 B/C：原生启动（有源码则编译，只有二进制则直接用）
+├── install.sh              # 方式 C：下载预编译包，零工具链
 ├── .env.example            # 端口 / 监听地址
 ├── config/
 │   ├── gateway.example.json        # 网关配置模板（排程、号池、冷却）
