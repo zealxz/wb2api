@@ -1,0 +1,71 @@
+# wb2api —— 一键编排：网关 + 管理面板
+#
+#   docker compose up -d --build      # 首次
+#   docker compose logs -f            # 看日志
+#   docker compose down               # 停止（保留 ./data 与 ./config）
+#
+# 端口与监听地址可在 .env 中覆盖（见 .env.example）。
+
+name: wb2api
+
+services:
+  gateway:
+    build:
+      context: ./gateway
+    image: wb2api:local
+    container_name: wb2api
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      # 网关是给客户端（OpenAI 兼容）用的，默认对局域网/Tailscale 开放。
+      # 只想本机用：在 .env 里设 WB2API_BIND=127.0.0.1
+      - "${WB2API_BIND:-0.0.0.0}:${WB2API_PORT:-7863}:7863"
+    volumes:
+      # 账号凭证：面板写入、网关读写，两个容器共享同一目录
+      - ./data/auths:/app/auths
+      # 运行时状态（冷却/熔断/发号状态）
+      - ./data/state:/app/data
+      # 网关配置（api_key、排程、号池调优），由 setup.sh 生成
+      - ./config/gateway.json:/app/config.json
+    healthcheck:
+      # 不用 /healthz：无可用账号时它返回 503，会让健康检查误报 unhealthy。
+      # 这里只验证端口在监听（进程活着）。
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 7863 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+    networks:
+      - wb2api
+
+  panel:
+    build:
+      context: ./panel
+    image: wb2api-panel:local
+    container_name: wb2api-panel
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      # 后台管理面只绑回环，不对外暴露
+      - "127.0.0.1:${WB2API_PANEL_PORT:-8787}:8787"
+    volumes:
+      - ./data/auths:/app/auths
+      - ./data/panel:/data
+      # 面板配置（含面板口令）。独立于网关配置，两者不可混用。
+      - ./config/panel.json:/app/config.json
+      # 供面板「网关配置」页在线编辑网关配置
+      - ./config/gateway.json:/gateway/config.json
+      # 用于「系统」页一键重启网关。不需要可注释掉，面板会自动降级。
+      - /var/run/docker.sock:/var/run/docker.sock
+    # 面板需要读写挂载进来的凭证文件（chown 到 uid 10001），以 root 运行
+    user: "0:0"
+    networks:
+      - wb2api
+
+networks:
+  wb2api:

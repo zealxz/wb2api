@@ -1,0 +1,11 @@
+# 运行时机密与状态：绝不入库
+.env
+config/gateway.json
+config/panel.json
+data/
+
+# 本地构建/编辑器产物
+*.log
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,27 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  compose-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # compose 以只读方式挂载生成态配置，构建阶段并不需要；
+      # 这里补齐占位文件，保证编排文件本身可解析、镜像可构建。
+      - name: Prepare placeholder config
+        run: |
+          cp config/gateway.example.json config/gateway.json
+          cp config/panel.example.json config/panel.json
+          mkdir -p data/auths data/state data/panel
+
+      - name: Validate compose
+        run: docker compose config --quiet
+
+      - name: Build images
+        run: docker compose build
