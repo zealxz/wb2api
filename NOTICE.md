@@ -45,7 +45,17 @@ SOFTWARE.
 - `.github/`（指向原仓库 CI，在本仓库无意义）
 - 上游各自的 `docker-compose.yml`（由本仓库根目录的统一编排替代）
 
-### 2. 面板的代码修复（2 个文件）
+### 2. 提交前端构建产物（打包差异，非上游代码改动）
+
+上游 `panel/.gitignore` 忽略 `internal/webui/dist/assets/`，前端由 Dockerfile 的 Node 阶段生成。
+本发行版**把 `panel/internal/webui/dist/` 的构建产物（约 272KB）一并入库**，原因是：
+只装 Go、不用 Node 的用户执行 `go build ./cmd/server` 时，若 dist 只有占位 `index.html`，
+打出来的面板会白屏（占位 HTML 引用的 `assets/index-*.js` 不存在）。
+
+产物来自上游 `web/` 的 `npm ci && npm run build`（Node 20 + Vite），未做任何二次修改。
+Docker 构建流程不变，仍会在镜像内重新构建并覆盖该目录。
+
+### 3. 面板的代码修复（2 个文件）
 
 | 文件 | 改动 |
 |---|---|

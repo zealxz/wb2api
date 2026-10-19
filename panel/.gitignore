@@ -8,10 +8,14 @@ wbgui
 # 运行时数据目录：含账号凭证、配置备份、面板登录凭据（绝不能入库）
 /data/
 
-# 前端依赖与构建产物（构建产物由 Dockerfile 生成，不入库）
+# 前端依赖（node_modules 不入库）
 web/node_modules/
 web/dist/
-internal/webui/dist/assets/
+
+# 注意：internal/webui/dist/ 在本发行版中**刻意入库**。
+# 上游让它由 Dockerfile 的 node 阶段生成，但那会让「不用 Docker、只装 Go」
+# 的用户编译出白屏面板（占位 index.html 引用的 assets 不存在）。
+# 因此这里提交已构建产物（约 272KB），使 `go build ./cmd/server` 单工具链即可产出完整界面。
 
 # 编辑器 / 系统
 .DS_Store

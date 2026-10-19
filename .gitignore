@@ -2,10 +2,19 @@
 .env
 config/gateway.json
 config/panel.json
+config/gateway.native.json
+config/panel.native.json
 data/
+
+# 原生编译产物
+bin/
 
 # 本地构建/编辑器产物
 *.log
 .DS_Store
 .idea/
 .vscode/
+
+# Python 缓存（脚本调试产物）
+__pycache__/
+*.pyc

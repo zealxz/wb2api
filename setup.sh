@@ -42,6 +42,15 @@ GW_PORT=$(envget WB2API_PORT);        GW_PORT=${GW_PORT:-7863}
 PANEL_PORT=$(envget WB2API_PANEL_PORT); PANEL_PORT=${PANEL_PORT:-8787}
 
 # ── 3. 生成密钥与配置 ──────────────────────────────────────────────────────
+# Docker 的单文件 bind mount 在源路径不存在时会把它建成**目录**，
+# 之后脚本写同名文件会失败（报 "Is a directory"）。这里主动清掉这种残留。
+for f in config/gateway.json config/panel.json; do
+    if [ -d "$f" ]; then
+        rmdir "$f" 2>/dev/null || fail "$f 是一个非空目录（Docker 单文件挂载残留）。请备份后删除再重跑。"
+        say "==> 已清理被 Docker 误建为目录的 $f"
+    fi
+done
+
 if [ "$REGEN" = "1" ]; then
     for f in config/gateway.json config/panel.json; do
         [ -f "$f" ] && cp "$f" "$f.bak.$(date +%Y%m%d%H%M%S)"

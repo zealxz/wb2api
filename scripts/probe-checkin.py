@@ -2,7 +2,12 @@
 """对照探针：对 CN / Global 账号分别打 daily-checkin 的两条候选路径 + 余额接口。
 
 只读取证用：打印 HTTP 状态与响应体，不修改任何本地文件。
-用法: docker exec -i wb2api python3 - < scripts/probe-checkin.py
+
+用法:
+    # Docker 模式
+    docker exec -i wb2api python3 - < scripts/probe-checkin.py
+    # 原生模式（在仓库根目录）
+    WB2API_AUTHS_DIR="$PWD/data/auths" python3 scripts/probe-checkin.py
 """
 import json
 import os
@@ -10,7 +15,7 @@ import ssl
 import urllib.request
 import urllib.error
 
-AUTHS = "/app/auths"
+AUTHS = os.environ.get("WB2API_AUTHS_DIR", "/app/auths")
 
 CN_CHAT = "https://copilot.tencent.com"
 CN_BILLING = "https://www.codebuddy.cn"

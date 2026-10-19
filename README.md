@@ -15,9 +15,23 @@
   批量签到 / 刷 token / 查余额、网关配置在线编辑、一键重启。
 - **号池能力**：软/硬冷却、熔断降权、会话粘性、按积分到期紧迫度优先消耗。
 - **双区域**：国内版（`codebuddy.cn`）与国际版（`workbuddy.ai`）可同时纳入同一号池。
-- **容器化**：网关与面板两个容器，共享一个私有网络；宿主机不需要装 Go / Node。
+- **两种部署形态**：Docker（一条命令起两个容器）或原生二进制（只需 Go，不用 Node）；
+  两者共用同一套配置、同一份 `data/`，可随时切换。
 
-## 快速开始（macOS）
+## 部署方式：Docker 或原生，二选一
+
+两种方式功能等价，共用同一份 `data/auths/` 与同一份 `.env` 端口配置，可随时切换。
+
+| | 方式 A：Docker（推荐） | 方式 B：原生运行 |
+|---|---|---|
+| 依赖 | Docker Desktop | **Go 1.22+**（macOS 26 建议 1.25+）、openssl、curl |
+| 命令 | `./setup.sh` | `./setup-native.sh` |
+| 运行形态 | 两个容器 | 两个普通进程 |
+| 面板「一键重启网关」 | 可用 | 不可用（用脚本重载） |
+| 首次耗时 | 1–3 分钟（拉取基础镜像） | 约 10–60 秒（拉取 Go 模块） |
+| 适用场景 | 想省心、日常使用 | 不想装 Docker、资源敏感、部署到服务器 |
+
+### 方式 A：Docker（推荐）
 
 前置条件：安装并**启动** [Docker Desktop for Mac](https://www.docker.com/products/docker-desktop/)。
 
@@ -29,7 +43,7 @@ cd wb2api
 
 脚本会：检查 Docker → 生成随机 `api_key` 与面板口令 → 构建镜像 → 启动 → 等待就绪 → 打印接入信息。
 
-首次构建约 1–3 分钟（拉取 Go / Node 基础镜像）。之后 `./setup.sh --no-build` 秒起。
+首次构建约 1–3 分钟。之后 `./setup.sh --no-build` 秒起。
 
 输出示例：
 
@@ -41,6 +55,48 @@ cd wb2api
 ```
 
 > 端口占用时改 `.env`（`WB2API_PORT` / `WB2API_PANEL_PORT`）后重跑 `./setup.sh --no-build`。
+
+### 方式 B：原生运行（不用 Docker）
+
+前置条件：**只需要 Go**（`brew install go`，或从 https://go.dev/dl/ 安装）。
+版本要求 1.22+；**macOS 26 上建议 1.25+** —— 更早的 Go 在 darwin 上不生成 `LC_UUID` 这个
+Mach-O 加载命令，产物会被 dyld 直接拒绝（`Abort trap: 6`）。`setup-native.sh` 编译后会实测
+二进制能否启动，遇到该问题会明确提示升级，而不是让你面对一个跑不起来的文件。
+
+前端产物已随仓库提供，因此**不需要 Node.js**。
+
+```bash
+git clone https://github.com/zealxz/wb2api.git
+cd wb2api
+./setup-native.sh
+```
+
+脚本会：校验 Go 版本 → 生成随机密钥 → 编译 `bin/wb2api` 与 `bin/wb2api-panel` → 后台启动 → 等待就绪 → 打印接入信息。
+
+```bash
+./setup-native.sh --stop        # 停止两个后台进程
+./setup-native.sh --no-build    # 改完配置后重载（不重新编译）
+./setup-native.sh --regen       # 重新生成 api_key 与面板口令
+```
+
+**原生模式与 Docker 模式的差异**：
+
+1. 面板的「重启网关」按钮依赖容器运行时，原生模式下不可用；改完网关配置请执行 `./setup-native.sh --no-build`。
+2. 进程日志写在 `data/logs/gateway.log` 与 `data/logs/panel.log`，PID 在 `data/run/`。
+3. 两个进程由 `nohup` 托管，**关闭终端后继续运行**；机器重启后需重新执行脚本
+   （仓库不内置开机自启，可自行用 `launchd` / `systemd` 包装这两个二进制）。
+4. 配置文件名不同：原生模式用 `config/gateway.native.json` 与 `config/panel.native.json`，
+   其中路径已写成绝对路径，因此从任意目录启动都能正确找到 `data/`。
+
+也可以完全手工启动（脚本做的事就是这些）：
+
+```bash
+cd gateway && go build -o ../bin/wb2api ./cmd/server && cd ..
+cd panel   && go build -o ../bin/wb2api-panel ./cmd/server && cd ..
+./bin/wb2api       -config config/gateway.native.json
+./bin/wb2api-panel -config config/panel.native.json
+```
+
 
 ## 添加账号
 
@@ -60,15 +116,17 @@ cd wb2api
 ./scripts/activate-global-accounts.sh SG      # 可选地区：HK MO SG TH PH MY ID
 ```
 
-脚本幂等，已激活的账号显示 `already active`。**地区是账号级半永久属性，选错了不好改，请自己确认。**
-执行完无需重启网关。
+脚本会自动识别部署方式：容器在运行就走 `docker exec`，否则按原生模式直接调用本地
+`python3`（原生模式需要系统有 python3，Docker 模式不需要）。幂等，已激活的账号显示 `already active`。
+
+**地区是账号级半永久属性，选错了不好改，请自己确认。** 执行完无需重启网关。
 
 ## 客户端接入
 
 | 项 | 值 |
 |---|---|
 | Base URL | `http://127.0.0.1:7863/v1` |
-| API Key | `setup.sh` 输出的 `api_key`（也在 `config/gateway.json`） |
+| API Key | 安装脚本输出的 `api_key`（也写在 `config/gateway.json` / `config/gateway.native.json`） |
 | 模型名 | `GET /v1/models` 拉取 |
 
 自检：
@@ -98,13 +156,16 @@ API Key 不变。**管理面板始终只绑 `127.0.0.1`**，不对外暴露。
 
 ```
 .
-├── docker-compose.yml      # 网关 + 面板统一编排
-├── setup.sh                # 一键部署
+├── docker-compose.yml      # 方式 A：网关 + 面板统一编排
+├── setup.sh                # 方式 A：Docker 一键部署
+├── setup-native.sh         # 方式 B：原生一键部署（只需 Go）
 ├── .env.example            # 端口 / 监听地址
 ├── config/
-│   ├── gateway.example.json   # 网关配置模板（排程、号池、冷却）
-│   └── panel.example.json     # 面板配置模板
-├── data/                   # 运行时生成：auths 凭证、状态、备份（不入库）
+│   ├── gateway.example.json        # 网关配置模板（排程、号池、冷却）
+│   ├── panel.example.json          # 面板配置模板（Docker 模式）
+│   └── panel.native.example.json   # 面板配置模板（原生模式）
+├── data/                   # 运行时生成：auths 凭证、状态、日志、PID（不入库）
+├── bin/                    # 原生编译产物（不入库）
 ├── scripts/
 │   ├── activate-global-accounts.sh   # 国际版激活
 │   └── probe-checkin.py              # 签到/余额对照诊断
@@ -115,14 +176,21 @@ API Key 不变。**管理面板始终只绑 `127.0.0.1`**，不对外暴露。
 ## 常用命令
 
 ```bash
+# ── Docker 模式 ──────────────────────────────────────────────
 docker compose logs -f              # 全部日志
 docker compose logs -f gateway      # 只看网关
 docker compose restart gateway      # 改完配置后重载
 docker compose down                 # 停止（保留 data/ 与 config/）
 ./setup.sh --regen                  # 重新生成 api_key 与面板口令（旧配置备份）
+
+# ── 原生模式 ─────────────────────────────────────────────────
+tail -f data/logs/gateway.log       # 网关日志
+tail -f data/logs/panel.log         # 面板日志
+./setup-native.sh --no-build        # 改完配置后重载
+./setup-native.sh --stop            # 停止
 ```
 
-查看号池状态：
+查看号池状态（两种模式相同）：
 
 ```bash
 curl -s http://127.0.0.1:7863/status -H "Authorization: Bearer <API_KEY>"
@@ -143,6 +211,12 @@ curl -s http://127.0.0.1:7863/status -H "Authorization: Bearer <API_KEY>"
 本改动是让面板与网关口径一致，不改变任何国内版行为。
 
 指纹校验可自行对比：`diff -r gateway/ <上游 checkout>`、`diff -r panel/ <上游 checkout>`。
+
+除此之外有两处**打包层面的差异**（不涉及上游代码逻辑）：
+
+- `panel/internal/webui/dist/` 的前端构建产物随仓库提交（约 272KB）。上游让它由 Dockerfile 的
+  Node 阶段生成，但那会让「只装 Go」的用户编译出白屏面板。Docker 构建流程不变，仍会重新构建覆盖。
+- `setup-native.sh`、`scripts/activate_global.py` 等为本仓库新增文件，上游不存在。
 
 其余文件均为上游原样 vendored，仅去掉了 `.git`、本地 `auths/`、`data/`、`config.json` 与上游 compose。
 

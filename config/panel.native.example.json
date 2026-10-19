@@ -1,0 +1,22 @@
+{
+  "listen": ":8787",
+  "gateway_url": "http://127.0.0.1:7863",
+  "gateway_api_key": "__GATEWAY_API_KEY__",
+  "auth_dir": "__ROOT__/data/auths",
+  "auth_owner_uid": -1,
+  "auth_owner_gid": -1,
+  "config_file": "__ROOT__/config/gateway.native.json",
+  "backup_dir": "__ROOT__/data/panel/backups",
+  "credentials_file": "__ROOT__/data/panel/credentials.json",
+  "pricing_file": "__ROOT__/data/panel/pricing.json",
+  "docker_container": "",
+  "dangerous_ops": true,
+  "read_only": false,
+  "refresh_config_on_login": true,
+  "timeout_seconds": 120,
+  "ui": {
+    "username": "admin",
+    "password": "__PANEL_PASSWORD__",
+    "session_ttl": "12h"
+  }
+}
